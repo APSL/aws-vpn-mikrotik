@@ -45,6 +45,13 @@ SECRET_2="${AWS_SECRETS_TO_USE[1]}"
 # Home Network Configuration
 CUSTOMER_PUBLIC_ADDR="${AWS_ADDRESSES_TO_USE[0]}"
 
+echo -n "Type the name of the VPN to add as a comment (Enter to use 'AWS-VPN' as default): "
+read VPN_NAME
+if [ x == x$VPN_NAME ];
+then
+  VPN_NAME="AWS-VPN"
+fi
+
 # VPC Details
 DEFAULT_LOCAL_NET="$(ip route | grep 'scope link' | sed 's/^\([0-9./]*\).*$/\1/')"
 echo -n "Type in local network CIDR (Enter to use guessed $DEFAULT_LOCAL_NET): "
@@ -54,12 +61,33 @@ then
   LOCAL_NET=$DEFAULT_LOCAL_NET
 fi
 
+echo -n "Type the public interface name of your router (Enter to use ether1 as default): "
+read LOCAL_PUBLIC_INTERFACE
+if [ x == x$LOCAL_PUBLIC_INTERFACE ]
+then
+  LOCAL_PUBLIC_INTERFACE="ether1"
+fi
+
 # VPC Details
-echo -n "Type in your VPC CIDR [10.0.0.0/16]):"
+echo -n "Type in your VPC CIDR [10.0.0.0/16]): "
 read VPC_NET
 if [ x == x$VPC_NET ];
 then
   VPC_NET="10.0.0.0/16"
+fi
+
+echo -n "Type the position to place the firewall filter rules (Enter to use 0 as default): "
+read FILTER_PLACE
+if [ x == x$FILTER_PLACE ];
+then
+  FILTER_PLACE="0"
+fi
+
+echo -n "Type the position to place the firewall nat rules (Enter to use 0 as default): "
+read NAT_PLACE
+if [ x == x$NAT_PLACE ];
+then
+  NAT_PLACE="0"
 fi
 
 echo
@@ -81,7 +109,7 @@ echo "AWS Tunnel #2 - Inside Virtual Gateway Address: $AWS_TUNNEL2_INSIDE_VIRTUA
 echo "AWS Tunnel #2 - Secret: $SECRET_2"
 echo
 
-echo -n "Is this correct(y/n)? "
+echo -n "Is this correct (y/n)? "
 read CONFIRM
 if [ xy != x$CONFIRM ];
 then
@@ -99,7 +127,7 @@ fi
 echo \
 "# Create IPSec proposal
 /ip ipsec proposal \
-    add name=AWS \
+    add name=\"$VPN_NAME\" \
     auth-algorithms=sha1 \
     enc-algorithms=aes-128-cbc \
     lifetime=8m \
@@ -107,7 +135,7 @@ echo \
 
 # Create IPSec peers
 /ip ipsec peer \
-    add comment=\"AWS Peer 1\" \
+    add comment=\"$VPN_NAME Peer 1\" \
     address=$AWS_TUNNEL1_PUBLIC_ADDR/32 \
     local-address=$CUSTOMER_PUBLIC_ADDR \
     secret=$AWS_TUNNEL1_SHARED_SECRET \
@@ -116,7 +144,7 @@ echo \
     nat-traversal=no
 
 /ip ipsec peer \
-    add comment=\"AWS Peer 2\" \
+    add comment=\"$VPN_NAME Peer 2\" \
     address=$AWS_TUNNEL2_PUBLIC_ADDR/32 \
     local-address=$CUSTOMER_PUBLIC_ADDR \
     secret=$SECRET_2 \
@@ -126,78 +154,87 @@ echo \
 
 # Create IPSec Policies
 /ip ipsec policy \
-    add comment=\"AWS Tunnel 1\" \
-    proposal=AWS \
+    add comment=\"$VPN_NAME Tunnel 1\" \
+    proposal=\"$VPN_NAME\" \
     src-address=0.0.0.0/0 dst-address=$VPC_NET \
     sa-src-address=$CUSTOMER_PUBLIC_ADDR sa-dst-address=$AWS_TUNNEL1_PUBLIC_ADDR \
     tunnel=yes
 
 /ip ipsec policy \
-    add comment=\"AWS Tunnel 1\" \
-    proposal=AWS \
+    add comment=\"$VPN_NAME Tunnel 1\" \
+    proposal=\"$VPN_NAME\" \
     src-address=0.0.0.0/0 dst-address=$AWS_TUNNEL1_INSIDE_VIRTUAL_GATEWAY_ADDR/32 \
     sa-src-address=$CUSTOMER_PUBLIC_ADDR sa-dst-address=$AWS_TUNNEL1_PUBLIC_ADDR  \
     tunnel=yes
 
 /ip ipsec policy \
-    add comment=\"AWS Tunnel 2\" \
-    proposal=AWS \
+    add comment=\"$VPN_NAME Tunnel 2\" \
+    proposal=\"$VPN_NAME\" \
     src-address=0.0.0.0/0 dst-address=$VPC_NET \
     sa-src-address=$CUSTOMER_PUBLIC_ADDR sa-dst-address=$AWS_TUNNEL2_PUBLIC_ADDR \
     tunnel=yes
 
 /ip ipsec policy \
-    add comment=\"AWS Tunnel 2\" \
-    proposal=AWS \
+    add comment=\"$VPN_NAME Tunnel 2\" \
+    proposal=\"$VPN_NAME\" \
     src-address=0.0.0.0/0 dst-address=$AWS_TUNNEL2_INSIDE_VIRTUAL_GATEWAY_ADDR/32 \
     sa-src-address=$CUSTOMER_PUBLIC_ADDR sa-dst-address=$AWS_TUNNEL2_PUBLIC_ADDR  \
     tunnel=yes
 
 # NAT
 /ip firewall nat \
+    place-before=$NAT_PLACE \
+    comment=\"$VPN_NAME\" \
     add chain=srcnat \
     action=accept \
     dst-address=$VPC_NET src-address=$LOCAL_NET
 
 /ip firewall nat \
+    place-before=$NAT_PLACE \
+    comment=\"$VPN_NAME\" \
     add chain=srcnat \
     action=accept \
     dst-address=$LOCAL_NET src-address=$VPC_NET
 
 # IPSec IKE Firewall Filters
 /ip firewall filter \
-    add comment=\"AWS Tunnel 1\" \
-    chain=input \
-    protocol=ipsec-esp \
-    src-address=$AWS_TUNNEL1_PUBLIC_ADDR dst-address=$CUSTOMER_PUBLIC_ADDR
-
-/ip firewall filter \
-    add comment=\"AWS Tunnel 1\" \
-    chain=input \
-    protocol=udp \
-    src-address=$AWS_TUNNEL1_PUBLIC_ADDR  src-port=500 \
-    dst-address=$CUSTOMER_PUBLIC_ADDR dst-port=500
-
-/ip firewall filter \
-    add comment=\"AWS Tunnel 2\" \
+    add comment=\"$VPN_NAME Tunnel 2\" \
+    place-before=$FILTER_PLACE \
     chain=input \
     protocol=ipsec-esp \
     src-address=$AWS_TUNNEL2_PUBLIC_ADDR dst-address=$CUSTOMER_PUBLIC_ADDR
 
 /ip firewall filter \
-    add comment=\"AWS Tunnel 2\" \
+    add comment=\"$VPN_NAME Tunnel 2\" \
+    place-before=$FILTER_PLACE \
     chain=input \
     protocol=udp \
     src-address=$AWS_TUNNEL2_PUBLIC_ADDR  src-port=500 \
     dst-address=$CUSTOMER_PUBLIC_ADDR dst-port=500
 
+/ip firewall filter \
+    add comment=\"$VPN_NAME Tunnel 1\" \
+    place-before=$FILTER_PLACE \
+    chain=input \
+    protocol=ipsec-esp \
+    src-address=$AWS_TUNNEL1_PUBLIC_ADDR dst-address=$CUSTOMER_PUBLIC_ADDR
+
+/ip firewall filter \
+    add comment=\"$VPN_NAME Tunnel 1\" \
+    place-before=$FILTER_PLACE \
+    chain=input \
+    protocol=udp \
+    src-address=$AWS_TUNNEL1_PUBLIC_ADDR  src-port=500 \
+    dst-address=$CUSTOMER_PUBLIC_ADDR dst-port=500
+
+
 # Add static route
-/ip route add distance=1 dst-address=$VPC_NET gateway=$AWS_TUNNEL1_INSIDE_VIRTUAL_GATEWAY_ADDR
-/ip route add distance=1 dst-address=$VPC_NET gateway=$AWS_TUNNEL2_INSIDE_VIRTUAL_GATEWAY_ADDR
+/ip route add comment=\"$VPN_NAME Tunnel 1\" distance=1 dst-address=$VPC_NET gateway=$AWS_TUNNEL1_INSIDE_VIRTUAL_GATEWAY_ADDR
+/ip route add comment=\"$VPN_NAME Tunnel 2\" distance=1 dst-address=$VPC_NET gateway=$AWS_TUNNEL2_INSIDE_VIRTUAL_GATEWAY_ADDR
 
 # Addresses
-ip address add address=$AWS_TUNNEL1_INSIDE_CUSTOMER_GATEWAY_ADDR/30 disabled=no interface=ether1
-ip address add address=$AWS_TUNNEL2_INSIDE_CUSTOMER_GATEWAY_ADDR/30 disabled=no interface=ether1
+ip address add comment=\"$VPN_NAME Tunnel 1\" address=$AWS_TUNNEL1_INSIDE_CUSTOMER_GATEWAY_ADDR/30 disabled=no interface=$LOCAL_PUBLIC_INTERFACE
+ip address add comment=\"$VPN_NAME Tunnel 2\" address=$AWS_TUNNEL2_INSIDE_CUSTOMER_GATEWAY_ADDR/30 disabled=no interface=$LOCAL_PUBLIC_INTERFACE
 " > $CONFIG_FILE_PATH
 
 echo "Your config file has been generated in $CONFIG_FILE_PATH"
